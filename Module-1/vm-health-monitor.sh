@@ -4,16 +4,16 @@
 # VM Health Monitor Script
 # Purpose: Analyze Ubuntu VM health based on CPU, Memory, and Disk utilization
 # Author: Reddyprakash25
-# Date: 2026-05-06
+# Date: 2026-05-09
 #
 # Health Status Logic:
-#   - HEALTHY: All metrics (CPU, Memory, Disk) are below 60% utilization
-#   - NOT HEALTHY: Any metric exceeds 60% utilization
+#   - HEALTHY: All metrics (CPU, Memory, Disk) are BELOW 60% utilization
+#   - NOT HEALTHY: Any metric is EQUAL TO or ABOVE 60% utilization
 #
 # Usage:
-#   ./vm-health-monitor.sh              # Simple health status
-#   ./vm-health-monitor.sh explain      # Detailed explanation with reasons
-#   ./vm-health-monitor.sh help         # Display help information
+#   bash vm-health-monitor.sh              # Simple health status
+#   bash vm-health-monitor.sh explain      # Detailed explanation with reasons
+#   bash vm-health-monitor.sh help         # Display help information
 ################################################################################
 
 # Color codes for output
@@ -31,13 +31,13 @@ THRESHOLD=60
 # Description: Verify the script is running on Ubuntu
 ###############################################################################
 check_os() {
-    if [[ ! -f /etc/os-release ]]; then
+    if [ ! -f /etc/os-release ]; then
         echo -e "${RED}Error: Cannot determine OS type${NC}"
         exit 1
     fi
 
     . /etc/os-release
-    if [[ "$ID" != "ubuntu" ]]; then
+    if [ "$ID" != "ubuntu" ]; then
         echo -e "${YELLOW}Warning: This script is optimized for Ubuntu. Current OS: $NAME${NC}"
     fi
 }
@@ -49,15 +49,20 @@ check_os() {
 ###############################################################################
 get_cpu_usage() {
     # Get the average CPU usage from top command (1 iteration)
-    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}' | cut -d'.' -f1)
+    local cpu_usage=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print 100 - $8}' | cut -d'.' -f1)
     
     # Fallback if top command fails
-    if [[ -z "$cpu_usage" ]] || [[ ! "$cpu_usage" =~ ^[0-9]+$ ]]; then
+    if [ -z "$cpu_usage" ] || ! echo "$cpu_usage" | grep -q '^[0-9]*$'; then
         # Alternative method using /proc/stat
-        local cpu_usage=$(grep '^cpu ' /proc/stat | awk '{
+        cpu_usage=$(grep '^cpu ' /proc/stat | awk '{
             usage=($2+$4)*100/($2+$4+$5)
             printf "%d", usage
         }')
+    fi
+    
+    # Final fallback
+    if [ -z "$cpu_usage" ]; then
+        cpu_usage=0
     fi
     
     echo "$cpu_usage"
@@ -69,7 +74,13 @@ get_cpu_usage() {
 # Returns: Memory usage as integer percentage
 ###############################################################################
 get_memory_usage() {
-    local memory_usage=$(free | grep Mem | awk '{printf("%d", ($3/$2) * 100)}')
+    local memory_usage=$(free 2>/dev/null | grep Mem | awk '{printf("%d", ($3/$2) * 100)}')
+    
+    # Fallback if free command fails
+    if [ -z "$memory_usage" ]; then
+        memory_usage=0
+    fi
+    
     echo "$memory_usage"
 }
 
@@ -79,7 +90,13 @@ get_memory_usage() {
 # Returns: Disk usage as integer percentage
 ###############################################################################
 get_disk_usage() {
-    local disk_usage=$(df / | tail -1 | awk '{print $(NF-1)}' | sed 's/%//')
+    local disk_usage=$(df / 2>/dev/null | tail -1 | awk '{print $(NF-1)}' | sed 's/%//')
+    
+    # Fallback if df command fails
+    if [ -z "$disk_usage" ]; then
+        disk_usage=0
+    fi
+    
     echo "$disk_usage"
 }
 
@@ -94,7 +111,9 @@ evaluate_health() {
     local memory=$2
     local disk=$3
     
-    if (( cpu >= THRESHOLD || memory >= THRESHOLD || disk >= THRESHOLD )); then
+    # HEALTHY: All metrics < 60%
+    # NOT HEALTHY: Any metric >= 60%
+    if [ "$cpu" -ge "$THRESHOLD" ] || [ "$memory" -ge "$THRESHOLD" ] || [ "$disk" -ge "$THRESHOLD" ]; then
         return 1  # NOT HEALTHY
     else
         return 0  # HEALTHY
@@ -108,7 +127,7 @@ evaluate_health() {
 print_simple_status() {
     local status=$1
     
-    if [[ "$status" == "HEALTHY" ]]; then
+    if [ "$status" = "HEALTHY" ]; then
         echo -e "${GREEN}[✓] VM Status: $status${NC}"
     else
         echo -e "${RED}[✗] VM Status: $status${NC}"
@@ -132,7 +151,7 @@ print_detailed_status() {
     echo ""
     
     # Overall Status
-    if [[ "$status" == "HEALTHY" ]]; then
+    if [ "$status" = "HEALTHY" ]; then
         echo -e "${GREEN}Overall Status: ✓ HEALTHY${NC}"
     else
         echo -e "${RED}Overall Status: ✗ NOT HEALTHY${NC}"
@@ -141,7 +160,7 @@ print_detailed_status() {
     
     # CPU Status
     echo -e "${BLUE}─ CPU UTILIZATION:${NC}"
-    if (( cpu < THRESHOLD )); then
+    if [ "$cpu" -lt "$THRESHOLD" ]; then
         echo -e "  ${GREEN}✓ Status: PASS${NC}"
         echo -e "  Current Usage: ${GREEN}${cpu}%${NC} (Threshold: ${THRESHOLD}%)"
         echo -e "  Reason: CPU utilization is below the ${THRESHOLD}% threshold"
@@ -155,7 +174,7 @@ print_detailed_status() {
     
     # Memory Status
     echo -e "${BLUE}─ MEMORY UTILIZATION:${NC}"
-    if (( memory < THRESHOLD )); then
+    if [ "$memory" -lt "$THRESHOLD" ]; then
         echo -e "  ${GREEN}✓ Status: PASS${NC}"
         echo -e "  Current Usage: ${GREEN}${memory}%${NC} (Threshold: ${THRESHOLD}%)"
         echo -e "  Reason: Memory utilization is below the ${THRESHOLD}% threshold"
@@ -169,7 +188,7 @@ print_detailed_status() {
     
     # Disk Status
     echo -e "${BLUE}─ DISK SPACE UTILIZATION (Root Filesystem):${NC}"
-    if (( disk < THRESHOLD )); then
+    if [ "$disk" -lt "$THRESHOLD" ]; then
         echo -e "  ${GREEN}✓ Status: PASS${NC}"
         echo -e "  Current Usage: ${GREEN}${disk}%${NC} (Threshold: ${THRESHOLD}%)"
         echo -e "  Reason: Disk space utilization is below the ${THRESHOLD}% threshold"
@@ -183,7 +202,7 @@ print_detailed_status() {
     
     # Summary
     echo -e "${BLUE}─ SUMMARY:${NC}"
-    if [[ "$status" == "HEALTHY" ]]; then
+    if [ "$status" = "HEALTHY" ]; then
         echo -e "  ${GREEN}All system metrics are within acceptable limits.${NC}"
         echo -e "  The VM is operating efficiently."
     else
@@ -200,46 +219,46 @@ print_detailed_status() {
 # Description: Display usage information
 ###############################################################################
 print_help() {
-    cat << EOF
-${BLUE}╔════════════════════════════════════════════════════════════╗${NC}
-${BLUE}║       VM HEALTH MONITOR - Usage Information                ║${NC}
-${BLUE}╚════════════════════════════════════════════════════════════╝${NC}
+    cat << 'EOF'
+╔════════════════════════════════════════════════════════════╗
+║       VM HEALTH MONITOR - Usage Information                ║
+╚════════════════════════════════════════════════════════════╝
 
-${YELLOW}Description:${NC}
+Description:
   Analyzes Ubuntu VM health based on CPU, Memory, and Disk utilization.
   Health status is HEALTHY if all metrics are below 60% utilization.
   Health status is NOT HEALTHY if any metric exceeds 60% utilization.
 
-${YELLOW}Usage:${NC}
-  ./vm-health-monitor.sh [OPTION]
+Usage:
+  bash vm-health-monitor.sh [OPTION]
 
-${YELLOW}Options:${NC}
+Options:
   (no option)   Display simple VM health status
   explain       Display detailed health report with reasons and metrics
   help          Show this help message
 
-${YELLOW}Examples:${NC}
+Examples:
   # Check VM health with simple output
-  \$ ./vm-health-monitor.sh
+  $ bash vm-health-monitor.sh
   [✓] VM Status: HEALTHY
 
   # Get detailed explanation
-  \$ ./vm-health-monitor.sh explain
+  $ bash vm-health-monitor.sh explain
 
   # Display help
-  \$ ./vm-health-monitor.sh help
+  $ bash vm-health-monitor.sh help
 
-${YELLOW}Health Thresholds:${NC}
+Health Thresholds:
   CPU Utilization:    < 60% = PASS, >= 60% = FAIL
   Memory Utilization: < 60% = PASS, >= 60% = FAIL
   Disk Utilization:   < 60% = PASS, >= 60% = FAIL
 
-${YELLOW}Requirements:${NC}
+Requirements:
   - Ubuntu/Debian Linux distribution
   - Standard utilities: top, free, df
   - Bash shell
 
-${YELLOW}Note:${NC}
+Note:
   This script should be run with appropriate permissions to access
   system metrics. For best results, run with sudo or appropriate user privileges.
 
@@ -266,7 +285,7 @@ main() {
     fi
     
     # Process command line arguments
-    case "${1,,}" in
+    case "$1" in
         explain)
             print_detailed_status "$cpu_usage" "$memory_usage" "$disk_usage" "$health_status"
             ;;
@@ -278,7 +297,7 @@ main() {
             ;;
         *)
             echo -e "${RED}Error: Unknown option '$1'${NC}"
-            echo "Use './vm-health-monitor.sh help' for usage information"
+            echo "Use 'bash vm-health-monitor.sh help' for usage information"
             exit 1
             ;;
     esac
